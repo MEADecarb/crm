@@ -7,7 +7,6 @@ import os
 import json
 
 # Enable logging
-import logging
 logging.basicConfig(level=logging.INFO)
 
 # Set up Google OAuth2 credentials
@@ -40,14 +39,14 @@ def google_login():
   
   flow.redirect_uri = "https://meacrm.streamlit.app/"  # Update this for your deployed app
 
-  if 'code' not in st.query_params:
+  query_params = st.experimental_get_query_params()
+  if 'code' not in query_params:
       if st.button("Login with Google"):
           authorization_url, _ = flow.authorization_url(prompt="consent")
-          st.experimental_set_query_params(authorization_url=authorization_url)
-          st.experimental_rerun()
+          st.write(f'<a href="{authorization_url}" target="_self">Click here to authenticate</a>', unsafe_allow_html=True)
       return False
 
-  flow.fetch_token(code=st.query_params['code'][0])
+  flow.fetch_token(code=query_params['code'][0])
   credentials = flow.credentials
 
   user_info = get_user_info(credentials)
