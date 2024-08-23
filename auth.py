@@ -6,6 +6,10 @@ from collections import defaultdict
 import time
 import re
 
+# Enable logging
+import logging
+logging.basicConfig(level=logging.INFO)
+
 # Database setup
 def init_db():
   conn = sqlite3.connect('users.db')
@@ -14,6 +18,7 @@ def init_db():
                (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT, totp_secret TEXT, is_2fa_enabled BOOLEAN)''')
   conn.commit()
   conn.close()
+  logging.info("Database initialized")
 
 # Password strength check
 def is_password_strong(password):
@@ -45,15 +50,29 @@ def authenticate(username, password, totp_token=None):
   user = c.fetchone()
   conn.close()
 
-  if user and bcrypt.checkpw(password.encode(), user[2]):
-      if user[5]:  # 2FA is enabled
-          if totp_token and verify_totp(user[4], totp_token):
-              return user, None
+  if user:
+      logging.info(f"User found: {user}")
+      if bcrypt.checkpw(password.encode(), user[2]):
+          if user[5]:  # 2FA is enabled
+              if totp_token:
+                  if verify_totp(user[4], totp_token):
+                      logging.info("2FA verification successful")
+                      return user, None
+                  else:
+                      logging.warning("Invalid 2FA token")
+                      return None, "Invalid 2FA token"
+              else:
+                  logging.info("2FA is enabled but no token provided")
+                  return user, "2FA_REQUIRED"
           else:
-              return None, "Invalid 2FA token"
-      else:  # 2FA is not enabled
-          return user, None
-  return None, "Invalid username or password"
+              logging.info("2FA not enabled for user")
+              return user, "2FA_SETUP_REQUIRED"
+      else:
+          logging.warning("Invalid password")
+          return None, "Invalid username or password"
+  else:
+      logging.warning("User not found")
+      return None, "Invalid username or password"
 
 def verify_totp(secret, token):
   totp = pyotp.TOTP(secret)
@@ -80,8 +99,10 @@ def setup_2fa(user):
           st.success("2FA has been successfully enabled!")
           st.session_state['user'] = user
           st.session_state['authenticated'] = True
+          logging.info(f"2FA enabled for user {user[1]}")
       else:
           st.error("Invalid verification code. Please try again.")
+          logging.warning(f"Failed 2FA setup attempt for user {user[1]}")
 
 # Login page
 def login_page():
@@ -89,25 +110,34 @@ def login_page():
   username = st.text_input("Username")
   password = st.text_input("Password", type="password")
   
-  user, error = authenticate(username, password)
-  
-  if user:
-      if not user[5]:  # 2FA is not enabled
+  if st.button("Login"):
+      user, error = authenticate(username, password)
+      
+      if user and error == "2FA_SETUP_REQUIRED":
           st.success("First-time login detected. Let's set up 2FA.")
           setup_2fa(user)
-      else:
+      elif user and error == "2FA_REQUIRED":
           totp_token = st.text_input("2FA Token")
-          if st.button("Login"):
+          if st.button("Verify 2FA"):
               user, error = authenticate(username, password, totp_token)
               if user:
                   st.session_state['user'] = user
                   st.success("Logged in successfully!")
                   st.session_state['authenticated'] = True
+                  logging.info(f"User {username} logged in successfully")
                   return True
               else:
                   st.error(error)
-  elif error:
-      st.error(error)
+                  logging.warning(f"Failed login attempt for user {username}")
+      elif user:
+          st.session_state['user'] = user
+          st.success("Logged in successfully!")
+          st.session_state['authenticated'] = True
+          logging.info(f"User {username} logged in successfully (no 2FA)")
+          return True
+      else:
+          st.error(error)
+          logging.warning(f"Failed login attempt for user {username}")
   
   return False
 
@@ -128,12 +158,16 @@ def register_page():
                         (username, hashed_password, 'user', '', False))
               conn.commit()
               st.success("Registration successful! Please log in to set up 2FA.")
+              logging.info(f"New user registered: {username}")
           except sqlite3.IntegrityError:
               st.error("Username already exists")
+              logging.warning(f"Registration attempt with existing username: {username}")
           finally:
               conn.close()
 
 def logout():
+  if 'user' in st.session_state:
+      logging.info(f"User {st.session_state['user'][1]} logged out")
   st.session_state['user'] = None
   st.session_state['authenticated'] = False
 
