@@ -1,58 +1,91 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
+from sqlalchemy import create_engine
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Function to load the data
-def load_data():
-    uploaded_file = st.file_uploader("Upload your CSV file", type=['csv'])
-    if uploaded_file is not None:
-        data = pd.read_csv(uploaded_file)
-        return data
-    return pd.DataFrame()
+# Database connection
+def init_db():
+    conn = sqlite3.connect('grant_management.db')
+    return conn
+
+# Function to create tables if they don't exist
+def create_table(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS applicants (
+                    unique_id TEXT PRIMARY KEY,
+                    grant_program TEXT,
+                    project_name TEXT,
+                    applicant_organization_name TEXT,
+                    organization_type TEXT,
+                    mea_pm TEXT,
+                    street TEXT,
+                    city TEXT,
+                    zip TEXT,
+                    primary_contact_person TEXT,
+                    primary_contact_email TEXT,
+                    primary_contact_phone_number TEXT,
+                    signatory_contact_name TEXT,
+                    signatory_contact_title TEXT,
+                    signatory_contact_email TEXT,
+                    signatory_contact_phone_number TEXT,
+                    additional_contact_name TEXT,
+                    additional_contact_title TEXT,
+                    additional_contact_email TEXT,
+                    additional_contact_phone_number TEXT,
+                    application_status TEXT,
+                    last_communication_date DATE,
+                    next_scheduled_communication_date DATE,
+                    communication_type TEXT,
+                    communication_notes TEXT,
+                    additional_notes TEXT
+                )''')
+
+# Function to load data
+def load_data(conn):
+    return pd.read_sql("SELECT * FROM applicants", conn)
 
 # Function to add a new applicant
-def add_applicant(data):
+def add_applicant(conn):
     st.header("Add New Applicant")
     
-    new_applicant = {}
-    new_applicant['Unique ID'] = st.text_input("Unique ID")
-    new_applicant['Grant Program'] = st.text_input("Grant Program")
-    new_applicant['Project Name'] = st.text_input("Project Name")
-    new_applicant['Applicant Organization Name'] = st.text_input("Applicant Organization Name")
-    new_applicant['Organization Type'] = st.selectbox("Organization Type", options=['Nonprofit', 'Government', 'Private', 'Educational Institution'])
-    new_applicant['MEA PM'] = st.text_input("MEA PM")
-    new_applicant['Street'] = st.text_input("Street")
-    new_applicant['City'] = st.text_input("City")
-    new_applicant['Zip'] = st.text_input("Zip")
-    new_applicant['Primary Contact Person'] = st.text_input("Primary Contact Person")
-    new_applicant['Primary Contact Email'] = st.text_input("Primary Contact Email")
-    new_applicant['Primary Contact Phone Number'] = st.text_input("Primary Contact Phone Number")
-    new_applicant['Signatory Contact Name'] = st.text_input("Signatory Contact Name")
-    new_applicant['Signatory Contact Title'] = st.text_input("Signatory Contact Title")
-    new_applicant['Signatory Contact Email'] = st.text_input("Signatory Contact Email")
-    new_applicant['Signatory Contact Phone Number'] = st.text_input("Signatory Contact Phone Number")
-    new_applicant['Additional Contact Name'] = st.text_input("Additional Contact Name")
-    new_applicant['Additional Contact Title'] = st.text_input("Additional Contact Title")
-    new_applicant['Additional Contact Email'] = st.text_input("Additional Contact Email")
-    new_applicant['Additional Contact Phone Number'] = st.text_input("Additional Contact Phone Number")
-    new_applicant['Application Status'] = st.selectbox("Application Status", options=['Submitted', 'Under Review', 'Approved', 'Rejected'])
-    new_applicant['Last Communication Date'] = st.date_input("Last Communication Date")
-    new_applicant['Next Scheduled Communication Date'] = st.date_input("Next Scheduled Communication Date")
-    new_applicant['Communication Type'] = st.text_input("Communication Type")
-    new_applicant['Communication Notes'] = st.text_area("Communication Notes")
-    new_applicant['Additional Notes'] = st.text_area("Additional Notes")
+    new_applicant = {
+        'unique_id': st.text_input("Unique ID"),
+        'grant_program': st.text_input("Grant Program"),
+        'project_name': st.text_input("Project Name"),
+        'applicant_organization_name': st.text_input("Applicant Organization Name"),
+        'organization_type': st.selectbox("Organization Type", options=['Nonprofit', 'Government', 'Private', 'Educational Institution']),
+        'mea_pm': st.text_input("MEA PM"),
+        'street': st.text_input("Street"),
+        'city': st.text_input("City"),
+        'zip': st.text_input("Zip"),
+        'primary_contact_person': st.text_input("Primary Contact Person"),
+        'primary_contact_email': st.text_input("Primary Contact Email"),
+        'primary_contact_phone_number': st.text_input("Primary Contact Phone Number"),
+        'signatory_contact_name': st.text_input("Signatory Contact Name"),
+        'signatory_contact_title': st.text_input("Signatory Contact Title"),
+        'signatory_contact_email': st.text_input("Signatory Contact Email"),
+        'signatory_contact_phone_number': st.text_input("Signatory Contact Phone Number"),
+        'additional_contact_name': st.text_input("Additional Contact Name"),
+        'additional_contact_title': st.text_input("Additional Contact Title"),
+        'additional_contact_email': st.text_input("Additional Contact Email"),
+        'additional_contact_phone_number': st.text_input("Additional Contact Phone Number"),
+        'application_status': st.selectbox("Application Status", options=['Submitted', 'Under Review', 'Approved', 'Rejected']),
+        'last_communication_date': st.date_input("Last Communication Date"),
+        'next_scheduled_communication_date': st.date_input("Next Scheduled Communication Date"),
+        'communication_type': st.text_input("Communication Type"),
+        'communication_notes': st.text_area("Communication Notes"),
+        'additional_notes': st.text_area("Additional Notes"),
+    }
 
     if st.button("Add Applicant"):
-        data = data.append(new_applicant, ignore_index=True)
+        placeholders = ', '.join('?' * len(new_applicant))
+        columns = ', '.join(new_applicant.keys())
+        sql = f"INSERT INTO applicants ({columns}) VALUES ({placeholders})"
+        conn.execute(sql, tuple(new_applicant.values()))
+        conn.commit()
         st.success("New applicant added successfully!")
-    return data
-
-# Function to download updated data as CSV
-def download_data(data):
-    csv = data.to_csv(index=False)
-    st.download_button(label="Download Updated CSV", data=csv, file_name='updated_grant_data.csv', mime='text/csv')
 
 # Function to send emails
 def send_emails(data):
@@ -67,7 +100,7 @@ def send_emails(data):
         if not sender_email or not password or not subject or not message_body:
             st.error("Please fill in all the fields.")
         else:
-            contacts = data[['Primary Contact Email', 'Signatory Contact Email', 'Additional Contact Email']].stack().unique()
+            contacts = data[['primary_contact_email', 'signatory_contact_email', 'additional_contact_email']].stack().unique()
             server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
             server.login(sender_email, password)
             
@@ -87,8 +120,11 @@ def send_emails(data):
 def main():
     st.title("Grant Management CRM")
 
+    conn = init_db()
+    create_table(conn)
+    
     # Load the data
-    data = load_data()
+    data = load_data(conn)
     
     if not data.empty:
         st.write("Current Data")
@@ -107,10 +143,7 @@ def main():
         st.write(data)
         
         # Add new applicant
-        data = add_applicant(data)
-        
-        # Download updated data
-        download_data(data)
+        add_applicant(conn)
         
         # Send emails
         send_emails(data)
