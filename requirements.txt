@@ -1,6 +1,5 @@
 streamlit
 pandas
+sqlalchemy
 bcrypt
 pyotp
-sqlite3
-sqlalchemy
