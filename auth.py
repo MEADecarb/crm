@@ -1,157 +1,87 @@
 import streamlit as st
 import sqlite3
-import bcrypt
-import pyotp
-from collections import defaultdict
-import time
-import re
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+import os
+import json
 
 # Enable logging
 import logging
 logging.basicConfig(level=logging.INFO)
+
+# Set up Google OAuth2 credentials
+CLIENT_CONFIG = {
+  "web": {
+      "client_id": "YOUR_CLIENT_ID",
+      "client_secret": "YOUR_CLIENT_SECRET",
+      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+      "token_uri": "https://oauth2.googleapis.com/token",
+      "redirect_uris": ["http://localhost:8501/"],
+  }
+}
 
 # Database setup
 def init_db():
   conn = sqlite3.connect('users.db')
   c = conn.cursor()
   c.execute('''CREATE TABLE IF NOT EXISTS users
-               (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT, totp_secret TEXT, is_2fa_enabled BOOLEAN)''')
+               (id INTEGER PRIMARY KEY, google_id TEXT UNIQUE, email TEXT UNIQUE, name TEXT, role TEXT)''')
   conn.commit()
   conn.close()
   logging.info("Database initialized")
 
-# Password strength check
-def is_password_strong(password):
-  if len(password) < 8:
-      return False
-  if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$', password):
-      return False
-  return True
+# Google Sign-In
+def google_login():
+  flow = Flow.from_client_config(
+      client_config=CLIENT_CONFIG,
+      scopes=["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile", "openid"]
+  )
+  
+  flow.redirect_uri = "http://localhost:8501/"
 
-# Rate limiting
-login_attempts = defaultdict(list)
+  if 'code' not in st.experimental_get_query_params():
+      authorization_url, _ = flow.authorization_url(prompt="consent")
+      st.markdown(f'<a href="{authorization_url}" target="_self">Login with Google</a>', unsafe_allow_html=True)
+      return False
 
-def is_rate_limited(username):
-  now = time.time()
-  login_attempts[username] = [t for t in login_attempts[username] if now - t < 60]
-  if len(login_attempts[username]) >= 5:
+  flow.fetch_token(code=st.experimental_get_query_params()['code'][0])
+  credentials = flow.credentials
+
+  user_info = get_user_info(credentials)
+  if user_info:
+      user = save_or_get_user(user_info)
+      st.session_state.user = user
+      st.session_state.authenticated = True
       return True
-  login_attempts[username].append(now)
   return False
 
-# User authentication
-def authenticate(username, password):
-  if is_rate_limited(username):
-      return None, "Too many login attempts. Please try again later."
+def get_user_info(credentials):
+  try:
+      service = build('oauth2', 'v2', credentials=credentials)
+      user_info = service.userinfo().get().execute()
+      return user_info
+  except Exception as e:
+      logging.error(f"Error getting user info: {e}")
+      return None
 
+def save_or_get_user(user_info):
   conn = sqlite3.connect('users.db')
   c = conn.cursor()
-  c.execute("SELECT * FROM users WHERE username=?", (username,))
+  c.execute("SELECT * FROM users WHERE google_id=?", (user_info['id'],))
   user = c.fetchone()
+  
+  if not user:
+      c.execute("INSERT INTO users (google_id, email, name, role) VALUES (?, ?, ?, ?)",
+                (user_info['id'], user_info['email'], user_info['name'], 'user'))
+      conn.commit()
+      user = (c.lastrowid, user_info['id'], user_info['email'], user_info['name'], 'user')
+  
   conn.close()
-
-  if user and bcrypt.checkpw(password.encode(), user[2]):
-      return user, None
-  return None, "Invalid username or password"
-
-def verify_totp(secret, token):
-  totp = pyotp.TOTP(secret)
-  return totp.verify(token)
-
-# Setup 2FA
-def setup_2fa(user):
-  if 'totp_secret' not in st.session_state:
-      st.session_state.totp_secret = pyotp.random_base32()
-  
-  totp = pyotp.TOTP(st.session_state.totp_secret)
-  qr_code = totp.provisioning_uri(user[1], issuer_name="MEADecarb CRM")
-  
-  st.write("Scan this QR code with your authenticator app:")
-  st.image(f"https://api.qrserver.com/v1/create-qr-code/?data={qr_code}&size=200x200")
-  st.write(f"Or enter this secret manually: {st.session_state.totp_secret}")
-  
-  verification_code = st.text_input("Enter the verification code from your app:")
-  if st.button("Verify and Enable 2FA"):
-      if verify_totp(st.session_state.totp_secret, verification_code):
-          conn = sqlite3.connect('users.db')
-          c = conn.cursor()
-          c.execute("UPDATE users SET totp_secret = ?, is_2fa_enabled = ? WHERE id = ?", (st.session_state.totp_secret, True, user[0]))
-          conn.commit()
-          conn.close()
-          st.success("2FA has been successfully enabled!")
-          st.session_state.user = (user[0], user[1], user[2], user[3], st.session_state.totp_secret, True)
-          st.session_state.authenticated = True
-          del st.session_state.totp_secret
-          logging.info(f"2FA enabled for user {user[1]}")
-          st.experimental_rerun()
-      else:
-          st.error("Invalid verification code. Please try again.")
-          logging.warning(f"Failed 2FA setup attempt for user {user[1]}")
-
-# Login page
-def login_page():
-  if 'authenticated' in st.session_state and st.session_state.authenticated:
-      st.success("You are already logged in.")
-      return True
-
-  st.title("Login")
-  username = st.text_input("Username")
-  password = st.text_input("Password", type="password")
-  
-  if st.button("Login"):
-      user, error = authenticate(username, password)
-      
-      if user:
-          if not user[5]:  # 2FA is not enabled
-              st.session_state.temp_user = user
-              st.success("First-time login detected. Let's set up 2FA.")
-              setup_2fa(user)
-          else:
-              totp_token = st.text_input("2FA Token")
-              if st.button("Verify 2FA"):
-                  if verify_totp(user[4], totp_token):
-                      st.session_state.user = user
-                      st.session_state.authenticated = True
-                      st.success("Logged in successfully!")
-                      logging.info(f"User {username} logged in successfully")
-                      st.experimental_rerun()
-                  else:
-                      st.error("Invalid 2FA token")
-                      logging.warning(f"Failed 2FA verification for user {username}")
-      else:
-          st.error(error)
-          logging.warning(f"Failed login attempt for user {username}")
-  
-  return False
-
-# Registration page
-def register_page():
-  st.title("Register")
-  username = st.text_input("Username")
-  password = st.text_input("Password", type="password")
-  if not is_password_strong(password):
-      st.warning("Password must be at least 8 characters long and contain uppercase, lowercase, digit, and special character.")
-  else:
-      if st.button("Register"):
-          conn = sqlite3.connect('users.db')
-          c = conn.cursor()
-          hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-          try:
-              c.execute("INSERT INTO users (username, password, role, totp_secret, is_2fa_enabled) VALUES (?, ?, ?, ?, ?)",
-                        (username, hashed_password, 'user', '', False))
-              conn.commit()
-              st.success("Registration successful! Please log in to set up 2FA.")
-              logging.info(f"New user registered: {username}")
-          except sqlite3.IntegrityError:
-              st.error("Username already exists")
-              logging.warning(f"Registration attempt with existing username: {username}")
-          finally:
-              conn.close()
+  return user
 
 def logout():
-  if 'user' in st.session_state:
-      logging.info(f"User {st.session_state.user[1]} logged out")
-  for key in ['user', 'authenticated', 'temp_user', 'totp_secret']:
+  for key in ['user', 'authenticated']:
       if key in st.session_state:
           del st.session_state[key]
 
