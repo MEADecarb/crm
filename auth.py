@@ -41,8 +41,10 @@ def google_login():
   flow.redirect_uri = "https://meacrm.streamlit.app/"  # Update this for your deployed app
 
   if 'code' not in st.query_params:
-      authorization_url, _ = flow.authorization_url(prompt="consent")
-      st.markdown(f'<a href="{authorization_url}" target="_self">Login with Google</a>', unsafe_allow_html=True)
+      if st.button("Login with Google"):
+          authorization_url, _ = flow.authorization_url(prompt="consent")
+          st.experimental_set_query_params(authorization_url=authorization_url)
+          st.experimental_rerun()
       return False
 
   flow.fetch_token(code=st.query_params['code'][0])
