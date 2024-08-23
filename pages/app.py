@@ -6,6 +6,15 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from auth import check_authentication
+
+# Check authentication
+check_authentication()
+
+
 # Database connection
 def init_db():
     conn = sqlite3.connect('grant_management.db')
