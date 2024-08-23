@@ -133,21 +133,28 @@ def check_user_role(required_role: str) -> bool:
       return False
 
 # Main app
+# Main app
 async def main():
   await init_db()
   
-  if not check_authentication():
-      await google_login()
-  else:
-      if st.button("Logout"):
-          await logout()
-          st.experimental_rerun()
+  with st.sidebar:
+      if 'authenticated' not in st.session_state or not st.session_state.authenticated:
+          if await google_login():
+              st.rerun()
+      else:
+          st.write(f"Welcome, {st.session_state.user[3]}!")
+          if st.button("Logout"):
+              await logout()
+              st.rerun()
 
   # Your app logic here
-  if check_user_role('admin'):
-      st.write("Welcome, Admin!")
-  elif check_user_role('user'):
-      st.write("Welcome, User!")
+  if 'authenticated' in st.session_state and st.session_state.authenticated:
+      if check_user_role('admin'):
+          st.write("Welcome, Admin!")
+      elif check_user_role('user'):
+          st.write("Welcome, User!")
+  else:
+      st.write("Please log in to access the app.")
 
 if __name__ == "__main__":
   asyncio.run(main())
