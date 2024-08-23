@@ -40,7 +40,7 @@ def is_rate_limited(username):
   return False
 
 # User authentication
-def authenticate(username, password, totp_token=None):
+def authenticate(username, password):
   if is_rate_limited(username):
       return None, "Too many login attempts. Please try again later."
 
@@ -50,29 +50,9 @@ def authenticate(username, password, totp_token=None):
   user = c.fetchone()
   conn.close()
 
-  if user:
-      logging.info(f"User found: {user}")
-      if bcrypt.checkpw(password.encode(), user[2]):
-          if user[5]:  # 2FA is enabled
-              if totp_token:
-                  if verify_totp(user[4], totp_token):
-                      logging.info("2FA verification successful")
-                      return user, None
-                  else:
-                      logging.warning("Invalid 2FA token")
-                      return None, "Invalid 2FA token"
-              else:
-                  logging.info("2FA is enabled but no token provided")
-                  return user, "2FA_REQUIRED"
-          else:
-              logging.info("2FA not enabled for user")
-              return user, "2FA_SETUP_REQUIRED"
-      else:
-          logging.warning("Invalid password")
-          return None, "Invalid username or password"
-  else:
-      logging.warning("User not found")
-      return None, "Invalid username or password"
+  if user and bcrypt.checkpw(password.encode(), user[2]):
+      return user, None
+  return None, "Invalid username or password"
 
 def verify_totp(secret, token):
   totp = pyotp.TOTP(secret)
@@ -80,33 +60,37 @@ def verify_totp(secret, token):
 
 # Setup 2FA
 def setup_2fa(user):
-  totp_secret = pyotp.random_base32()
-  totp = pyotp.TOTP(totp_secret)
+  if 'totp_secret' not in st.session_state:
+      st.session_state.totp_secret = pyotp.random_base32()
+  
+  totp = pyotp.TOTP(st.session_state.totp_secret)
   qr_code = totp.provisioning_uri(user[1], issuer_name="MEADecarb CRM")
   
   st.write("Scan this QR code with your authenticator app:")
   st.image(f"https://api.qrserver.com/v1/create-qr-code/?data={qr_code}&size=200x200")
-  st.write(f"Or enter this secret manually: {totp_secret}")
+  st.write(f"Or enter this secret manually: {st.session_state.totp_secret}")
   
   verification_code = st.text_input("Enter the verification code from your app:")
   if st.button("Verify and Enable 2FA"):
-      if verify_totp(totp_secret, verification_code):
+      if verify_totp(st.session_state.totp_secret, verification_code):
           conn = sqlite3.connect('users.db')
           c = conn.cursor()
-          c.execute("UPDATE users SET totp_secret = ?, is_2fa_enabled = ? WHERE id = ?", (totp_secret, True, user[0]))
+          c.execute("UPDATE users SET totp_secret = ?, is_2fa_enabled = ? WHERE id = ?", (st.session_state.totp_secret, True, user[0]))
           conn.commit()
           conn.close()
           st.success("2FA has been successfully enabled!")
-          st.session_state['user'] = (user[0], user[1], user[2], user[3], totp_secret, True)
-          st.session_state['authenticated'] = True
+          st.session_state.user = (user[0], user[1], user[2], user[3], st.session_state.totp_secret, True)
+          st.session_state.authenticated = True
+          del st.session_state.totp_secret
           logging.info(f"2FA enabled for user {user[1]}")
+          st.experimental_rerun()
       else:
           st.error("Invalid verification code. Please try again.")
           logging.warning(f"Failed 2FA setup attempt for user {user[1]}")
 
 # Login page
 def login_page():
-  if 'authenticated' in st.session_state and st.session_state['authenticated']:
+  if 'authenticated' in st.session_state and st.session_state.authenticated:
       st.success("You are already logged in.")
       return True
 
@@ -117,28 +101,23 @@ def login_page():
   if st.button("Login"):
       user, error = authenticate(username, password)
       
-      if user and error == "2FA_SETUP_REQUIRED":
-          st.success("First-time login detected. Let's set up 2FA.")
-          setup_2fa(user)
-      elif user and error == "2FA_REQUIRED":
-          totp_token = st.text_input("2FA Token")
-          if st.button("Verify 2FA"):
-              user, error = authenticate(username, password, totp_token)
-              if user:
-                  st.session_state['user'] = user
-                  st.session_state['authenticated'] = True
-                  st.success("Logged in successfully!")
-                  logging.info(f"User {username} logged in successfully")
-                  return True
-              else:
-                  st.error(error)
-                  logging.warning(f"Failed login attempt for user {username}")
-      elif user:
-          st.session_state['user'] = user
-          st.session_state['authenticated'] = True
-          st.success("Logged in successfully!")
-          logging.info(f"User {username} logged in successfully (no 2FA)")
-          return True
+      if user:
+          if not user[5]:  # 2FA is not enabled
+              st.session_state.temp_user = user
+              st.success("First-time login detected. Let's set up 2FA.")
+              setup_2fa(user)
+          else:
+              totp_token = st.text_input("2FA Token")
+              if st.button("Verify 2FA"):
+                  if verify_totp(user[4], totp_token):
+                      st.session_state.user = user
+                      st.session_state.authenticated = True
+                      st.success("Logged in successfully!")
+                      logging.info(f"User {username} logged in successfully")
+                      st.experimental_rerun()
+                  else:
+                      st.error("Invalid 2FA token")
+                      logging.warning(f"Failed 2FA verification for user {username}")
       else:
           st.error(error)
           logging.warning(f"Failed login attempt for user {username}")
@@ -171,13 +150,14 @@ def register_page():
 
 def logout():
   if 'user' in st.session_state:
-      logging.info(f"User {st.session_state['user'][1]} logged out")
-  st.session_state['user'] = None
-  st.session_state['authenticated'] = False
+      logging.info(f"User {st.session_state.user[1]} logged out")
+  for key in ['user', 'authenticated', 'temp_user', 'totp_secret']:
+      if key in st.session_state:
+          del st.session_state[key]
 
 # Authentication check
 def check_authentication():
-  if 'authenticated' in st.session_state and st.session_state['authenticated']:
+  if 'authenticated' in st.session_state and st.session_state.authenticated:
       return True
   else:
       st.warning("Please log in to access this page.")
