@@ -38,14 +38,14 @@ def google_login():
       scopes=["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile", "openid"]
   )
   
-  flow.redirect_uri = "http://localhost:8501/"
+  flow.redirect_uri = "https://meacrm.streamlit.app/"  # Update this for your deployed app
 
-  if 'code' not in st.experimental_get_query_params():
+  if 'code' not in st.query_params:
       authorization_url, _ = flow.authorization_url(prompt="consent")
       st.markdown(f'<a href="{authorization_url}" target="_self">Login with Google</a>', unsafe_allow_html=True)
       return False
 
-  flow.fetch_token(code=st.experimental_get_query_params()['code'][0])
+  flow.fetch_token(code=st.query_params['code'][0])
   credentials = flow.credentials
 
   user_info = get_user_info(credentials)
