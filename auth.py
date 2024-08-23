@@ -13,11 +13,11 @@ logging.basicConfig(level=logging.INFO)
 # Set up Google OAuth2 credentials
 CLIENT_CONFIG = {
   "web": {
-      "client_id": "YOUR_CLIENT_ID",
-      "client_secret": "YOUR_CLIENT_SECRET",
+      "client_id": st.secrets["google"]["client_id"],
+      "client_secret": st.secrets["google"]["client_secret"],
       "auth_uri": "https://accounts.google.com/o/oauth2/auth",
       "token_uri": "https://oauth2.googleapis.com/token",
-      "redirect_uris": ["http://localhost:8501/"],
+      "redirect_uris": ["https://meacrm.streamlit.app/"],  # Update this for your deployed app
   }
 }
 
