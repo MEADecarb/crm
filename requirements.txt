@@ -4,3 +4,4 @@ sqlalchemy
 bcrypt
 pyotp
 xlsxwriter
+plotly
