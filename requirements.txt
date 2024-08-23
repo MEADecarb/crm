@@ -1,2 +1,5 @@
 streamlit
 pandas
+bcrypt
+pyotp
+sqlite3
