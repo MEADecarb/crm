@@ -20,7 +20,24 @@ def init_db():
     conn.close()
     logging.info("Database initialized")
 
-# ... (keep the password strength and rate limiting functions as they were)
+# Password strength check
+def is_password_strong(password):
+    if len(password) < 8:
+        return False
+    if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$', password):
+        return False
+    return True
+
+# Rate limiting
+login_attempts = defaultdict(list)
+
+def is_rate_limited(username):
+    now = time.time()
+    login_attempts[username] = [t for t in login_attempts[username] if now - t < 60]
+    if len(login_attempts[username]) >= 5:
+        return True
+    login_attempts[username].append(now)
+    return False
 
 # User authentication
 def authenticate(username, password, totp_token=None):
@@ -128,19 +145,14 @@ def login_page():
     
     return False
 
-# ... (keep the register_page function as it was)
-
-def logout():
-    if 'user' in st.session_state:
-        logging.info(f"User {st.session_state['user'][1]} logged out")
-    st.session_state['user'] = None
-    st.session_state['authenticated'] = False
-
-# Authentication check
-def check_authentication():
-    if 'authenticated' in st.session_state and st.session_state['authenticated']:
-        return True
+# Registration page
+def register_page():
+    st.title("Register")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if not is_password_strong(password):
+        st.warning("Password must be at least 8 characters long and contain uppercase, lowercase, digit, and special character.")
     else:
-        st.warning("Please log in to access this page.")
-        st.stop()
-        return False
+        if st.button("Register"):
+            conn = sqlite3.connect('users.db')
+            c = conn.
